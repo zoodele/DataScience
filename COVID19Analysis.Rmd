@@ -1,0 +1,189 @@
+---
+title: "Reproducible Report on COVID19 Data"
+author: "Faith L."
+date: "2025-04-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Covid19 Data Analysis
+
+This report will be going over various statistics of both Global Data and US Data. Covid spread across the world and it is important to look into the different locations and see how each were impacted differently to look into what worked / didn't work for future pandemics.
+
+## About the Data
+The data used for this report is from the Johns Hopkins Coronavirus Resource Center. The data is hosted by the Center for Systems Science and Engineering (CSSE) at Johns Hopkins University on Github. There is also a table containing information about the population data, also from Johns Hopkins that is used and can be seen in the uid object.
+
+
+## Bias
+
+There are many biases in the analysis and data. 
+Covid deaths may not be counted or counted differently by area, or not even reported at all. Many covid cases may also not be counted, especially in more rural areas. Along with that different countries/ states may have different capabilities to even get the data, so different countries will most likely have a different percentage of counted cases/deaths versus uncounted cases/deaths.
+Deaths are also more likely to be counted for this data set when comparing to covid cases.
+
+## Reproduction Information
+This Report is over the COVID19 US and Global data analysis. The intention is . It goes over .
+
+The only library used in this project is tidyverse and is imported below. Also listed is the session information in the event of version interference. 
+
+Warning and information messages are turned on for all chunks for better reproducibility. 
+
+```{r libraries_and_versions}
+library(tidyverse)
+sessionInfo()
+```
+
+### Importing Source Data 
+
+```{r data_import}
+url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+
+file_names <- c("time_series_covid19_confirmed_US.csv",  "time_series_covid19_confirmed_global.csv", "time_series_covid19_deaths_US.csv",  "time_series_covid19_deaths_global.csv")
+
+uid_lookup_url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/4360e50239b4eb6b22f3a1759323748f36752177/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv"
+
+uid <- read_csv(uid_lookup_url)
+
+urls <- str_c(url, file_names)
+
+US_cases <- read_csv(urls[1], show_col_types = FALSE )
+global_cases <- read_csv(urls[2], show_col_types = FALSE)
+US_deaths <- read_csv(urls[3], show_col_types = FALSE)
+global_deaths <- read_csv(urls[4], show_col_types = FALSE)
+
+```
+
+### Data Reformatting
+The below chunks goes over the code used to reformat the data for better use in our analysis. For the US data, the date column was also reformatted to datetime.
+```{r data_reformat}
+
+# long pivot for all tables
+
+#global data
+global_cases <- global_cases %>% pivot_longer(cols = -c('Province/State', 'Country/Region', Lat, Long), names_to="date", values_to="cases") %>%
+  select(-c(Lat,Long))
+global_deaths <- global_deaths %>% pivot_longer(cols = -c('Province/State', 'Country/Region', Lat, Long), names_to="date", values_to="deaths") %>%
+  select(-c(Lat,Long))
+
+#us data
+US_deaths <- US_deaths %>%
+  pivot_longer(cols = -(UID:Population),
+               names_to = "date",
+               values_to = "deaths") %>%
+  select(Admin2:deaths) %>%
+  mutate(date = mdy(date)) %>%
+  select(-c(Lat, Long_))
+
+US_cases <- US_cases %>%
+  pivot_longer(cols = -(UID:Combined_Key),
+               names_to = "date",
+               values_to = "cases") %>%
+  select(Admin2:cases) %>%
+  mutate(date = mdy(date)) %>%
+  select(-c(Lat, Long_))
+
+```
+
+### Data Merge
+The data sets were merged into one consisting of both cases and deaths.
+
+```{r data_merge}
+# Combining global cases and deaths
+global <- global_cases %>%
+  full_join(global_deaths) %>%
+  rename(Country_Region = 'Country/Region',
+         Province_State = 'Province/State') %>%
+  mutate(date = mdy(date))
+
+# creating a new combined key column of province_state, country_region.
+global <- global %>%
+  unite("Combined_Key", c(Province_State, Country_Region),
+        sep = ", ",
+        na.rm = TRUE,
+        remove = FALSE)
+
+# adding the global population data from the uid object.
+global <- global %>%
+  left_join(uid, by= c("Province_State", "Country_Region", "Combined_Key"))
+
+# keeping specific columns for global
+global <- global %>%
+  select(Province_State, Country_Region, date,
+         cases, deaths, Population, Combined_Key)
+
+# Combining US Cases and Deaths
+US <- US_cases %>%
+  full_join(US_deaths)
+
+```
+```
+### US Data
+Below goes into the us summary data. First there is a new object created, 
+```{r us_totals}
+US_by_state <- US %>%
+  group_by(Province_State, Country_Region, date) %>%
+  summarize(cases= sum(cases), deaths= sum(deaths), Population=sum(Population)) %>%
+  mutate(deaths_per_mil = deaths*1000000/ Population) %>%
+  select(Province_State, Country_Region, date, cases, deaths, deaths_per_mil, Population) %>%
+  ungroup()
+
+US_totals <- US_by_state %>%
+  group_by(Country_Region, date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths), Population = sum(Population)) %>%
+  mutate(deaths_per_mil = deaths * 1000000 / Population) %>%
+  select(Country_Region, date, cases, deaths, deaths_per_mil, Population) %>%
+  ungroup() %>%
+  filter(cases > 0)
+```
+## US Cases Graphs
+Below are the graphs of the US_totals, along with a graph for Texas specifically.
+```{r us_graphs}
+US_totals %>%
+  ggplot(aes(x=date, y=cases)) +
+    geom_line(aes(color="cases")) +
+    geom_point(aes(color = "cases")) +
+    geom_line(aes(y=deaths, color="deaths")) +
+    geom_point(aes(y=deaths, color="deaths")) +
+    scale_y_log10() +
+    theme(legend.position = "bottom", axis.text.x = element_text(angle=90)) +
+    labs(title="COVID19 in US", y=NULL)
+
+state <- "Texas"
+US_by_state %>%
+  filter(Province_State == state) %>%
+  filter(cases > 0) %>%
+  ggplot(aes(x=date, y=cases)) +
+  geom_line(aes(color="cases")) +
+  geom_point(aes(color = "cases")) +
+  geom_line(aes(y=deaths, color="deaths")) +
+  geom_point(aes(y=deaths, color="deaths")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle=90)) +
+  labs(title=str_c("COVID19 in ", state), y=NULL)
+```
+## US Summary Statistics
+```{r us_summary}
+US_state_totals <- US_by_state %>%
+  group_by(Province_State) %>%
+  summarize(deaths=max(deaths), cases=max(cases),
+            population = max(Population),
+            cases_per_thou = 1000* cases/ Population,
+            deaths_per_thou = 1000* deaths / Population) %>%
+  filter(cases >0, population>0) %>%
+  ungroup()
+
+
+US_state_totals <- US_state_totals[!duplicated(US_state_totals), ] # removing duplicates
+
+US_state_totals %>%
+  slice_min(deaths_per_thou, n=10) %>%
+  select(deaths_per_thou, cases_per_thou, everything())
+
+```
+
+
+### Conclusion
+
+Covid data impacted every state.
