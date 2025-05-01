@@ -1,189 +1,282 @@
 ---
-title: "Reproducible Report on COVID19 Data"
-author: "Faith L."
-date: "2025-04-20"
+title: "NYPD Shooting Data Project"
+author: "Anon"
+date: "2025-03-30"
 output: html_document
 ---
-
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## Covid19 Data Analysis
+## NYPD Historical Shooting Data Analysis 
 
-This report will be going over various statistics of both Global Data and US Data. Covid spread across the world and it is important to look into the different locations and see how each were impacted differently to look into what worked / didn't work for future pandemics.
+This document goes over data analysis of the NYPD historical shooting data. There are two goals of this analysis: 1. To analyze and look at the trends and differences between female and male shooting victims. 2. To predict how many female shooting victims there will be in December 2025, as my best friend is visiting that month. I will be abbreviating New York City as NYC throughout this document.  
 
-## About the Data
-The data used for this report is from the Johns Hopkins Coronavirus Resource Center. The data is hosted by the Center for Systems Science and Engineering (CSSE) at Johns Hopkins University on Github. There is also a table containing information about the population data, also from Johns Hopkins that is used and can be seen in the uid object.
+The data source for this analysis comes from NYPD, and consist of shooting incidents by victim with demographic information on the victim and suspect, if the victim was killed, location and datetime information. This data is a list of victims, and there may be multiple victims per shooting. Each shooting will have its own unique incident id to track if there were multiple victims. This analysis will put a focus on shooting Victims, and not incidents.
 
 
-## Bias
-
-There are many biases in the analysis and data. 
-Covid deaths may not be counted or counted differently by area, or not even reported at all. Many covid cases may also not be counted, especially in more rural areas. Along with that different countries/ states may have different capabilities to even get the data, so different countries will most likely have a different percentage of counted cases/deaths versus uncounted cases/deaths.
-Deaths are also more likely to be counted for this data set when comparing to covid cases.
-
-## Reproduction Information
-This Report is over the COVID19 US and Global data analysis. The intention is . It goes over .
-
-The only library used in this project is tidyverse and is imported below. Also listed is the session information in the event of version interference. 
-
-Warning and information messages are turned on for all chunks for better reproducibility. 
-
-```{r libraries_and_versions}
+Tidyverse library is used for this analysis. Below lists the versions used and session information for reproducibility.
+```{r required_libraries, warning = FALSE}
 library(tidyverse)
 sessionInfo()
 ```
 
-### Importing Source Data 
+The chunk below consists of loading in the data and doing the initial cleaning and formatting.
 
-```{r data_import}
-url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+```{r import_and_clean, warning = FALSE, message=FALSE}
+url_shooting_data = "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD" # URL for the source data
 
-file_names <- c("time_series_covid19_confirmed_US.csv",  "time_series_covid19_confirmed_global.csv", "time_series_covid19_deaths_US.csv",  "time_series_covid19_deaths_global.csv")
+nypd_shooting_data <- read.csv(url_shooting_data)
 
-uid_lookup_url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/4360e50239b4eb6b22f3a1759323748f36752177/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv"
+#Below function cleans up NA / unknown values as they have switched standards between years.
 
-uid <- read_csv(uid_lookup_url)
+na_cleanup <- function(x) {
+  if (is.character(x) || is.factor(x)) {
+    x[x %in% c("NA", "(null)","(Null)","N/A", "Null", "NULL", "Unknown", "", " ","U","UNKNOWN")] <- NA
+    }
+  return(x)
+}
 
-urls <- str_c(url, file_names)
-
-US_cases <- read_csv(urls[1], show_col_types = FALSE )
-global_cases <- read_csv(urls[2], show_col_types = FALSE)
-US_deaths <- read_csv(urls[3], show_col_types = FALSE)
-global_deaths <- read_csv(urls[4], show_col_types = FALSE)
-
-```
-
-### Data Reformatting
-The below chunks goes over the code used to reformat the data for better use in our analysis. For the US data, the date column was also reformatted to datetime.
-```{r data_reformat}
-
-# long pivot for all tables
-
-#global data
-global_cases <- global_cases %>% pivot_longer(cols = -c('Province/State', 'Country/Region', Lat, Long), names_to="date", values_to="cases") %>%
-  select(-c(Lat,Long))
-global_deaths <- global_deaths %>% pivot_longer(cols = -c('Province/State', 'Country/Region', Lat, Long), names_to="date", values_to="deaths") %>%
-  select(-c(Lat,Long))
-
-#us data
-US_deaths <- US_deaths %>%
-  pivot_longer(cols = -(UID:Population),
-               names_to = "date",
-               values_to = "deaths") %>%
-  select(Admin2:deaths) %>%
-  mutate(date = mdy(date)) %>%
-  select(-c(Lat, Long_))
-
-US_cases <- US_cases %>%
-  pivot_longer(cols = -(UID:Combined_Key),
-               names_to = "date",
-               values_to = "cases") %>%
-  select(Admin2:cases) %>%
-  mutate(date = mdy(date)) %>%
-  select(-c(Lat, Long_))
+#Changing date column to datetime and applying cleaning function
+nypd_shooting_data <- nypd_shooting_data %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE)) %>%
+  mutate(across(everything(), na_cleanup))
 
 ```
 
-### Data Merge
-The data sets were merged into one consisting of both cases and deaths.
+## Aggregating Data
 
-```{r data_merge}
-# Combining global cases and deaths
-global <- global_cases %>%
-  full_join(global_deaths) %>%
-  rename(Country_Region = 'Country/Region',
-         Province_State = 'Province/State') %>%
-  mutate(date = mdy(date))
+Below the data is aggregated to yearly and monthly counts by victim sex. The statistical murder flag is also aggregated to then calculate the rate of which shootings are murders.
 
-# creating a new combined key column of province_state, country_region.
-global <- global %>%
-  unite("Combined_Key", c(Province_State, Country_Region),
-        sep = ", ",
-        na.rm = TRUE,
-        remove = FALSE)
-
-# adding the global population data from the uid object.
-global <- global %>%
-  left_join(uid, by= c("Province_State", "Country_Region", "Combined_Key"))
-
-# keeping specific columns for global
-global <- global %>%
-  select(Province_State, Country_Region, date,
-         cases, deaths, Population, Combined_Key)
-
-# Combining US Cases and Deaths
-US <- US_cases %>%
-  full_join(US_deaths)
-
-```
-```
-### US Data
-Below goes into the us summary data. First there is a new object created, 
-```{r us_totals}
-US_by_state <- US %>%
-  group_by(Province_State, Country_Region, date) %>%
-  summarize(cases= sum(cases), deaths= sum(deaths), Population=sum(Population)) %>%
-  mutate(deaths_per_mil = deaths*1000000/ Population) %>%
-  select(Province_State, Country_Region, date, cases, deaths, deaths_per_mil, Population) %>%
+```{r agg_year_month, warning = FALSE, message=FALSE}
+#yearly totals
+yearly_count_by_sex <- nypd_shooting_data %>%
+  filter(
+    VIC_SEX %in% c("F", "M")
+  ) %>%
+  mutate(year = year(OCCUR_DATE)) %>%
+  group_by(year, VIC_SEX) %>%
+  summarise(
+    total = n(),
+    murders = sum(STATISTICAL_MURDER_FLAG == "true"),
+    percent_murder = murders / total * 100
+  ) %>%
   ungroup()
 
-US_totals <- US_by_state %>%
-  group_by(Country_Region, date) %>%
-  summarize(cases = sum(cases), deaths = sum(deaths), Population = sum(Population)) %>%
-  mutate(deaths_per_mil = deaths * 1000000 / Population) %>%
-  select(Country_Region, date, cases, deaths, deaths_per_mil, Population) %>%
+#monthly totals
+monthly_count_by_sex <- nypd_shooting_data %>%
+  filter(
+    VIC_SEX %in% c("F", "M")
+  ) %>%
+  mutate(month = floor_date(OCCUR_DATE, unit = "month")) %>%
+  group_by(month, VIC_SEX) %>%
+  summarise(
+    total = n(),
+    murders = sum(STATISTICAL_MURDER_FLAG == "true"),
+    percent_murder = murders / total * 100
+  ) %>%
+  ungroup()
+```
+
+## Visualization
+Below trends the aggregated in the previous block. I found it very surprising the lows for 2020 and 2008, two major recessions.
+*NOTE: There may be one perpetrator with multiple victims of a shooting. This graph will consider each victim separately, even if in the same shooting incident. Null values were not included.*
+
+
+```{r graph_yearly_rate, warning = FALSE, message = FALSE}
+#plotting murder rate
+
+ggplot(yearly_count_by_sex, aes(x = year)) +
+  geom_line(aes(y = percent_murder, color = VIC_SEX), size = 1, na.rm = TRUE) +
+  geom_point(aes(y = percent_murder, color = VIC_SEX), size = 2, na.rm = TRUE) +
+  scale_x_continuous(breaks = seq(min(yearly_count_by_sex$year), max(yearly_count_by_sex$year), by = 2)) +
+  labs(
+    title = "Murder Rate by Sex",
+    x = "Year",
+    y = "Murder Rate",
+    color = ""
+  ) +
+    scale_color_manual(values = c("F" = "red", "M" = "blue")) +
+
+  theme_minimal(base_size = 14)
+
+```
+ \
+Below is a graph of the yearly shooting totals by sex. The women totals remain relatively flat compared to men.
+
+```{r total_shooting_trends, warning = FALSE, message = FALSE}
+#plotting yearly victims
+ggplot(yearly_count_by_sex, aes(x = year, y = total, color = VIC_SEX)) +
+  geom_line(size = 1) +
+  geom_point(size = 1.5) +
+  labs(
+    title = "Yearly Shootings by Victim Sex",
+    x = "Year",
+    y = "Number of Shootings",
+    color = "Victim Sex"
+  ) +
+  scale_color_manual(values = c("F" = "red", "M" = "blue")) +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{r total_murder_trends, warning = FALSE, message = FALSE}
+ggplot(yearly_count_by_sex, aes(x = year, y = murders, color = VIC_SEX)) +
+  geom_line(size = 1) +
+  geom_point(size = 1.5) +
+  labs(
+    title = "Yearly Murders by Victim sex",
+    x = "Year",
+    y = "Number of Murders",
+    color = "Victim sex"
+  ) +
+  scale_color_manual(values = c("F" = "red", "M" = "blue")) +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+ \
+I noticed that the shootings potentially follow a monthly pattern when I did a monthly plot (This plot is not on the report because it was messy). 
+Below is computation of statistics of the historical shooting data by month.
+```{r monthly_stats, warning = FALSE}
+monthly_statistics <- monthly_count_by_sex %>%
+  mutate(calendar_month = month(month, label = TRUE, abbr = TRUE)) %>% # getting month
+  group_by(calendar_month, VIC_SEX) %>%
+  summarise(murdered_total = sum(murders),
+            total_sd = sd(total),
+            total_victims = sum(total),
+            murdered_average = mean(murders),
+            total_average = mean(total),
+            murdered_sd = sd(murders),
+            total_sd = sd(total),
+            .groups = "drop") #summarizing total, average, and standard deviation
+ 
+```
+
+
+Below is the graph for both total victims and murdered victims:
+
+```{r monthly_total_graphs, warning = FALSE, message = FALSE}
+#plotting to see if there are any trends
+
+ggplot(monthly_statistics, aes(x = calendar_month, y = total_average, color = VIC_SEX, group = VIC_SEX)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  geom_errorbar(
+    aes(ymin = total_average - total_sd, ymax = total_average + total_sd),
+    width = 0.2
+  ) +
+  labs(
+    title = "Average Monthly Shootings by sex (±1 SD)",
+    x = "Month",
+    y = "Avg. Shootings",
+    color = "Victim sex"
+  ) +
+  scale_color_manual(values = c("F" = "red", "M" = "blue")) +
+  theme_minimal(base_size = 14)
+```
+
+
+```{r monthly_murder_graphs, warning = FALSE, message = FALSE}
+ggplot(monthly_statistics, aes(x = calendar_month, y = murdered_average, color = VIC_SEX, group = VIC_SEX)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  geom_errorbar(
+    aes(ymin = murdered_average - murdered_sd, ymax = murdered_average + murdered_sd),
+    width = 0.2
+  ) +
+  labs(
+    title = "Average Monthly Murders by sex (±1 SD)",
+    x = "Month",
+    y = "Avg. Murders",
+    color = "Victim sex"
+  ) +
+  scale_color_manual(values = c("F" = "red", "M" = "blue")) +
+  theme_minimal(base_size = 14)
+
+
+
+```
+ \
+This graph shows a defined trend with shooting incidents peaking during summer for men and women.
+
+---
+## Prediction Model
+
+For the model portion of this project I am doing a simple prediction of this years predicted shootings for December. This is because one of my good friends (a woman) is going to NYC in December. I am removing NYE from the list as my friend will not be visiting then and it is a significant holiday where people are drinking and more likely to shoot.
+Below is the code for my prediction. A sinusoidal model was used as I assumed that it follows a cyclic trend over the years.
+```{r model_and_plot, warning = FALSE, message = FALSE}
+
+# new dataframe with only female values
+yearly_count_female <- nypd_shooting_data %>%
+  filter(
+    !(month(OCCUR_DATE) == 12 & day(OCCUR_DATE) == 31),
+    VIC_SEX %in% c("F", "M")
+  ) %>%
+  mutate(month = floor_date(OCCUR_DATE, unit = "month")) %>%
+  group_by(month, VIC_SEX) %>%
+  summarise(
+    total = n(),
+    murders = sum(STATISTICAL_MURDER_FLAG == "true"),
+    percent_murder = murders / total * 100
+  ) %>%
   ungroup() %>%
-  filter(cases > 0)
+  mutate(
+    month_label = month(month, label = TRUE, abbr = FALSE),
+    year = year(month)
+  ) %>%
+  filter(
+    VIC_SEX == "F",
+    month_label == "December"
+  )
+
+model <- lm(total ~ sin(2*pi*year/12) + cos(2*pi*year/12), data = yearly_count_female) # training the model
+
+# adding prediction value
+yearly_count_female <- yearly_count_female %>%
+    mutate(predicted = predict(model))
+
+# plotting
+ggplot(yearly_count_female, aes(x = year)) +
+  geom_point(aes(y = total), color = "red", size = 2) +  # actual
+  geom_line(aes(y = predicted), color = "green", size = 2) +           # predicted
+  labs(
+    title = "December Actual vs Predicted Female Shooting Incidents",
+    x = "Year",
+    y = "Total Female Shooting Victims"
+  ) +
+  theme_minimal(base_size = 14)
 ```
-## US Cases Graphs
-Below are the graphs of the US_totals, along with a graph for Texas specifically.
-```{r us_graphs}
-US_totals %>%
-  ggplot(aes(x=date, y=cases)) +
-    geom_line(aes(color="cases")) +
-    geom_point(aes(color = "cases")) +
-    geom_line(aes(y=deaths, color="deaths")) +
-    geom_point(aes(y=deaths, color="deaths")) +
-    scale_y_log10() +
-    theme(legend.position = "bottom", axis.text.x = element_text(angle=90)) +
-    labs(title="COVID19 in US", y=NULL)
+ \
 
-state <- "Texas"
-US_by_state %>%
-  filter(Province_State == state) %>%
-  filter(cases > 0) %>%
-  ggplot(aes(x=date, y=cases)) +
-  geom_line(aes(color="cases")) +
-  geom_point(aes(color = "cases")) +
-  geom_line(aes(y=deaths, color="deaths")) +
-  geom_point(aes(y=deaths, color="deaths")) +
-  scale_y_log10() +
-  theme(legend.position = "bottom", axis.text.x = element_text(angle=90)) +
-  labs(title=str_c("COVID19 in ", state), y=NULL)
+Below are the model's summary statistics.
+
+```{r model summary}
+summary(model)
 ```
-## US Summary Statistics
-```{r us_summary}
-US_state_totals <- US_by_state %>%
-  group_by(Province_State) %>%
-  summarize(deaths=max(deaths), cases=max(cases),
-            population = max(Population),
-            cases_per_thou = 1000* cases/ Population,
-            deaths_per_thou = 1000* deaths / Population) %>%
-  filter(cases >0, population>0) %>%
-  ungroup()
+The P-Value for this model shows that it is **statistically significant**, assuming a standard 95% confidence. Given the R-squared and adjusted R-squared values paired with the statistical significance there is no strong evidence of over fitting.
 
-
-US_state_totals <- US_state_totals[!duplicated(US_state_totals), ] # removing duplicates
-
-US_state_totals %>%
-  slice_min(deaths_per_thou, n=10) %>%
-  select(deaths_per_thou, cases_per_thou, everything())
-
+Below I predict the female shooting victims for December of this year:
+```{r predict_this_year}
+predict(model, newdata = tibble(year = 2025))
 ```
+## Conclusion, Analysis
+There are a few takeaways from this analysis: Men are shot much more frequently than women, shooting victim counts for NYC peak during the summer months, specifically July, for both sexes, and that the count of female shooting victims remains relatively stable when compared to that of men.
 
+## Conclusion, Model
+I conclude that my friend shouldn't worry about being a shooting victim during her travels as the prediction for December this year is <6 female shooting victims. Considering the large population and tourists, this is an extremely unlikely case.
 
-### Conclusion
+## Biases
+I do want to note a few biases exist in the data and analysis and are not limited to:
 
-Covid data impacted every state.
+1. This does not take into account the population. The population of New York City has changed over time and the incidents may very well scale with the population.
+2. Some shootings may not be reported.
+3. Not all shootings have victims. Victim-less shootings were not counted.
+4. This analysis is based on the victim count so shootings with multiple victims may be over represented.
+5. It is unknown how trans, inter sex, or non-binary people are reported in this data set.
+6. Null values were not counted in the totals.
+7. Justified shootings (example: Self-defense) may be counted in the database.
+8. Many different factors impact how many shootings there are and were not taken into account in this analysis. Only shooting victim quantity and date were looked at.
+
+```{r}
+```
